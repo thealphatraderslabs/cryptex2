@@ -316,18 +316,28 @@ async function fetchInsuranceLean() {
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  GATE 1 — STRUCTURE + COMPRESSION
+//  GATE 1 — STRUCTURE + COMPRESSION (BOS/CHoCH sequence-aware)
 //
-//  Finds coins that are COILING at a key level before breaking.
-//  All four checks must pass:
+//  The real question is not just "did price break?" but:
+//  WHAT did it break, WHERE, and WHAT HAPPENED AFTER?
 //
-//  1. ATR compression  — atrNow/atrBaseline < 0.88 (volatility contracting)
-//  2. HTF direction    — structure trend must be bull or bear
-//  3. No recent BOS    — last structure event > RECENT_BOS_BARS ago
-//  4. Price at level   — within 4% of fresh OB or swing high/low
+//  SCENARIO A — CONTINUATION PULLBACK (smcScore base: 2)
+//    Last event = BOS in trend direction > 4 bars ago
+//    No CHoCH after that BOS (trend intact)
+//    Price pulled back toward OB created before the BOS
+//    ATR compressing in pullback = coiling for next leg
 //
-//  CVC fails check 1 — ATR exploded on the move
-//  FOLKS fails check 4 — price is mid-range, no nearby level
+//  SCENARIO B — CONFIRMED REVERSAL (smcScore base: 1)
+//    Full sequence: CHoCH → pullback → BOS in NEW direction
+//    CHoCH alone = rejected (classic early entry trap)
+//    Confirmation BOS must be > 2 bars old
+//    Price near first OB formed after CHoCH in new direction
+//
+//  REJECTED:
+//    CHoCH with no confirming BOS → too early, ambiguous
+//    BOS ≤ 4 bars ago → move still in progress
+//    Neutral structure → no directional basis
+//    Price mid-range with no nearby level → not at decision point
 // ═══════════════════════════════════════════════════════════════
 function runGate1(htfCandles, ticker) {
   if (!htfCandles || htfCandles.length < 60 || !ticker) {
@@ -338,7 +348,7 @@ function runGate1(htfCandles, ticker) {
   const n     = htfCandles.length;
   const atrs  = calcATR(htfCandles, 14);
 
-  // ── 1. ATR compression ───────────────────────────────────────
+  // ── ATR compression — both scenarios ────────────────────────
   let atrNow = null;
   for (let i = n - 1; i >= 0; i--) {
     if (atrs[i] != null) { atrNow = atrs[i]; break; }
@@ -355,54 +365,119 @@ function runGate1(htfCandles, ticker) {
   if (atrRatio >= ATR_COMPRESSION_MAX) {
     return {
       pass: false, dir: 'neutral', smcScore: 0, atrRatio,
-      reason: `ATR expanding (ratio ${atrRatio.toFixed(2)}) — price already in motion, not coiling`,
+      reason: `ATR expanding (${(atrRatio * 100).toFixed(0)}% of baseline) — price in motion, not coiling`,
     };
   }
 
-  // ── 2. HTF direction ─────────────────────────────────────────
+  // ── Structure detection ──────────────────────────────────────
   const { pivotHighs, pivotLows } = detectSwings(htfCandles, 5, 20);
   const structure = detectStructure(
     htfCandles,
     pivotHighs.map(p => ({ ...p })),
     pivotLows.map(p => ({ ...p }))
   );
-  const dir = structure?.trend || 'neutral';
+  const events = structure?.events || [];
 
-  if (dir === 'neutral') {
+  if (!events.length) {
     return {
-      pass: false, dir, smcScore: 0, atrRatio,
-      reason: `HTF structure neutral — no directional bias to trade`,
+      pass: false, dir: 'neutral', smcScore: 0, atrRatio,
+      reason: 'No structure events — insufficient price history for sequence analysis',
     };
   }
 
-  // ── 3. No recent BOS ─────────────────────────────────────────
-  const events    = structure?.events || [];
-  const lastEvent = events[events.length - 1];
-  const barsSince = lastEvent ? (n - 1 - (lastEvent.idx || 0)) : 999;
+  // ── Sequence analysis ────────────────────────────────────────
+  const lastEvent     = events[events.length - 1];
+  const lastEventBars = n - 1 - (lastEvent?.idx || 0);
 
-  if (barsSince <= RECENT_BOS_BARS) {
+  const lastBOS   = [...events].reverse().find(e => e.type === 'BOS');
+  const lastChoCH = [...events].reverse().find(e => e.type === 'CHoCH');
+
+  const lastBOSBars   = lastBOS   ? n - 1 - (lastBOS.idx   || 0) : 999;
+  const lastChoCHBars = lastChoCH ? n - 1 - (lastChoCH.idx || 0) : 999;
+
+  let scenario       = null;
+  let dir            = 'neutral';
+  let scenarioReason = '';
+
+  // ── Scenario A: Continuation Pullback ────────────────────────
+  // BOS in trend direction > 4 bars ago, no CHoCH after it
+  const chochAfterBOS = lastChoCH && lastBOS && lastChoCH.idx > lastBOS.idx;
+
+  if (lastBOS && lastBOSBars > RECENT_BOS_BARS && !chochAfterBOS) {
+    const trendDir = structure?.trend || 'neutral';
+    if (trendDir !== 'neutral' && lastBOS.dir === trendDir) {
+      scenario       = 'continuation';
+      dir            = trendDir;
+      scenarioReason = `BOS ${dir.toUpperCase()} confirmed ${lastBOSBars}b ago · no CHoCH since · trend intact`;
+    }
+  }
+
+  // ── Scenario B: Confirmed Reversal ───────────────────────────
+  // CHoCH + BOS confirmation in new direction > 2 bars ago
+  if (!scenario && lastChoCH && lastBOS) {
+    const confirmBOS = events
+      .filter(e => e.type === 'BOS' && e.idx > lastChoCH.idx && e.dir === lastChoCH.dir)
+      .slice(-1)[0];
+
+    if (confirmBOS) {
+      const confirmBOSBars = n - 1 - (confirmBOS.idx || 0);
+      if (confirmBOSBars > 2) {
+        scenario       = 'reversal';
+        dir            = lastChoCH.dir;
+        scenarioReason = `CHoCH ${lastChoCHBars}b ago → BOS confirmation ${confirmBOSBars}b ago · ${dir.toUpperCase()} established`;
+      } else {
+        return {
+          pass: false, dir: lastChoCH.dir, smcScore: 1, atrRatio,
+          scenario: 'reversal_too_fresh',
+          reason: `Reversal BOS only ${confirmBOSBars} bar(s) old — wait for pullback to form before entry`,
+        };
+      }
+    } else {
+      // CHoCH with no BOS confirmation — classic early entry trap
+      return {
+        pass: false, dir: 'neutral', smcScore: 1, atrRatio,
+        scenario: 'choch_unconfirmed',
+        reason: `CHoCH ${lastChoCHBars}b ago but NO confirming BOS yet — do not trade against trend prematurely`,
+      };
+    }
+  }
+
+  // ── No valid scenario ─────────────────────────────────────────
+  if (!scenario || dir === 'neutral') {
+    const trendDir = structure?.trend || 'neutral';
+    if (trendDir === 'neutral') {
+      return { pass: false, dir: 'neutral', smcScore: 0, atrRatio,
+        reason: 'Structure neutral — no BOS/CHoCH sequence qualifies' };
+    }
+    return { pass: false, dir: trendDir, smcScore: 1, atrRatio,
+      reason: `HTF ${trendDir.toUpperCase()} but sequence unclear — last event ${lastEventBars}b ago` };
+  }
+
+  // ── Continuation recency guard ───────────────────────────────
+  if (scenario === 'continuation' && lastBOSBars <= RECENT_BOS_BARS) {
     return {
-      pass: false, dir, smcScore: 1, atrRatio,
-      reason: `BOS ${barsSince} bar(s) ago — move already started, waiting for next setup`,
+      pass: false, dir, smcScore: 1, atrRatio, scenario,
+      reason: `BOS only ${lastBOSBars} bar(s) ago — move still playing out, pullback not formed`,
     };
   }
 
-  // ── 4. Price at key level ────────────────────────────────────
+  // ── Price at key level ───────────────────────────────────────
   const freshOBs = detectOrderBlocks(htfCandles, atrs, events, 8)
     .filter(ob => ob.state === 'fresh');
 
-  // Nearest direction-matched OB
   let nearestOB = null;
   let obDist    = Infinity;
   for (const ob of freshOBs) {
     const dirOK = (dir === 'bull' && ob.type === 'demand') ||
                   (dir === 'bear' && ob.type === 'supply');
     if (!dirOK) continue;
+    // Reversal: OB must be formed AFTER the CHoCH
+    if (scenario === 'reversal' && lastChoCH && ob.idx <= lastChoCH.idx) continue;
     const dist = Math.abs(price - (ob.high + ob.low) / 2) / price;
     if (dist < obDist) { obDist = dist; nearestOB = ob; }
   }
 
-  // Nearest direction-matched swing level as fallback
+  // Swing level fallback
   let nearestSwing = null;
   let swingDist    = Infinity;
   const swingPool  = dir === 'bull' ? pivotLows : pivotHighs;
@@ -421,19 +496,23 @@ function runGate1(htfCandles, ticker) {
 
   if (levelDist > OB_PROXIMITY_MAX_PCT) {
     return {
-      pass: false, dir, smcScore: 1, atrRatio,
-      reason: `Price ${(levelDist * 100).toFixed(1)}% from nearest ${levelType} — not at decision point`,
+      pass: false, dir, smcScore: 1, atrRatio, scenario,
+      reason: `${scenarioReason} · price ${(levelDist * 100).toFixed(1)}% from ${levelType} — not at decision point`,
     };
   }
 
   // ── All checks passed ─────────────────────────────────────────
-  // smcScore 1-4: direction(1) + compression(1) + level tightness(0-2)
+  // Continuation base = 2 (higher confidence), Reversal base = 1
+  const scenarioBase   = scenario === 'continuation' ? 2 : 1;
   const proximityBonus = levelDist < 0.02 ? 2 : levelDist < 0.035 ? 1 : 0;
-  const smcScore       = Math.min(1 + 1 + proximityBonus, 4);
+  const smcScore       = Math.min(scenarioBase + proximityBonus, 4);
+  const scenarioLabel  = scenario === 'continuation' ? 'CONTINUATION' : 'CONFIRMED REVERSAL';
 
   return {
     pass:         true,
     dir,
+    scenario,
+    scenarioLabel,
     smcScore,
     atrRatio,
     nearestLevel: levelPrice,
@@ -441,7 +520,9 @@ function runGate1(htfCandles, ticker) {
     levelType,
     nearestOB,
     structure,
-    reason: `HTF ${dir.toUpperCase()} · ATR ${(atrRatio * 100).toFixed(0)}% of baseline · ${(levelDist * 100).toFixed(1)}% from ${levelType} · pre-BOS (${barsSince} bars clean)`,
+    lastBOSBars:   lastBOSBars   < 999 ? lastBOSBars   : null,
+    lastChoCHBars: lastChoCHBars < 999 ? lastChoCHBars : null,
+    reason: `${scenarioLabel} · HTF ${dir.toUpperCase()} · ATR ${(atrRatio * 100).toFixed(0)}% · ${(levelDist * 100).toFixed(1)}% from ${levelType} · ${scenarioReason}`,
   };
 }
 
@@ -820,14 +901,18 @@ function buildResult(r, insuranceTrend) {
 
     // Gate summaries
     g1: {
-      pass:         g1.pass,
-      smcScore:     g1.smcScore,
-      dir:          g1.dir,
-      atrRatio:     g1.atrRatio,
-      levelDist:    g1.levelDist,
-      levelType:    g1.levelType,
-      nearestLevel: g1.nearestLevel,
-      reason:       g1.reason,
+      pass:          g1.pass,
+      smcScore:      g1.smcScore,
+      dir:           g1.dir,
+      scenario:      g1.scenario      || null,
+      scenarioLabel: g1.scenarioLabel || null,
+      atrRatio:      g1.atrRatio,
+      levelDist:     g1.levelDist,
+      levelType:     g1.levelType,
+      nearestLevel:  g1.nearestLevel,
+      lastBOSBars:   g1.lastBOSBars   || null,
+      lastChoCHBars: g1.lastChoCHBars || null,
+      reason:        g1.reason,
     },
     g2: {
       pass:         g2.pass,
