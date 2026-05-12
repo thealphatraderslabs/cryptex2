@@ -11,6 +11,7 @@ let selectedExchange = 'bybit';
 let selectedTF       = '1h';
 let scanResults      = [];
 let isScanning       = false;
+let activeFilter     = 'all'; // tracks current filter pill selection
 
 const $ = id => document.getElementById(id);
 
@@ -87,7 +88,12 @@ function init() {
       document.querySelectorAll('#ds-filter-row .ds-filter')
         .forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
-      renderResults(scanResults, btn.dataset.filter);
+      activeFilter = btn.dataset.filter;
+      // Only re-render if scan is done and results exist
+      // (gate strip may still be visible during the 2.5s hold)
+      if (!isScanning && scanResults.length) {
+        renderResults(scanResults, activeFilter);
+      }
     });
   });
 }
@@ -193,6 +199,7 @@ function startScan() {
 
   document.querySelectorAll('#ds-filter-row .ds-filter').forEach(b => b.classList.remove('active'));
   document.querySelector('#ds-filter-row .ds-filter[data-filter="all"]')?.classList.add('active');
+  activeFilter = 'all'; // reset filter state on new scan
 
   let g1Passed = 0, g2Passed = 0, g1Total = 0;
 
@@ -324,7 +331,8 @@ function startScan() {
           if (!results.length) {
             renderEmpty(aborted ? 'Scan aborted' : 'No coins passed all 3 gates on this scan');
           } else {
-            renderResults(results, 'all');
+            // Use activeFilter — user may have clicked a pill during the 2.5s hold
+            renderResults(results, activeFilter);
           }
         }, 320);
       }, 2500);
