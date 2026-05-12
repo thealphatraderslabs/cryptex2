@@ -449,7 +449,7 @@ function buildResultCard(r) {
     {
       label:  'STRUCTURE',
       pass:   r.g1.pass,
-      extra:  `ATR ${r.g1.atrRatio != null ? (r.g1.atrRatio * 100).toFixed(0) + '%' : '—'} · SMC ${r.g1.smcScore}/4`,
+      extra:  `${r.g1.scenarioLabel || 'SMC'} · ATR ${r.g1.atrRatio != null ? (r.g1.atrRatio * 100).toFixed(0) + '%' : '—'} · ${r.g1.smcScore}/4`,
       detail: r.g1.reason,
     },
     {
