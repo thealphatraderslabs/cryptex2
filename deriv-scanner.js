@@ -55,7 +55,7 @@ const RECENT_BOS_BARS      = 4;    // no BOS in last N bars (pre-move state)
 const OI_DIVERGENCE_MIN_PCT = 1.5; // OI must rise >= 1.5% while price flat
 const PRICE_FLAT_MAX_PCT    = 1.5; // price range <= 1.5% for OI divergence
 const CVD_CONFIRM_THRESHOLD = 15;  // |cvdBias| >= 15% = strong directional
-const GATE2_PASS_SCORE      = 2;   // need >= 2 points to pass
+const GATE2_PASS_SCORE      = 3;   // need >= 3 points — forces OI + CVD both contributing
 
 // ── Gate 3 thresholds ──────────────────────────────────────────
 const DERIV_SCORE_LONG_MIN  = 58;
@@ -784,7 +784,6 @@ export async function runDerivScan({ exchange, tf, onProgress, onResult, onDone,
           const basisAna  = calcBasisSlope(basisHistory);
           const moneyFlow = calcDerivedMoneyFlow(existing.ticker, oiLong, null);
 
-          // Use CVD from Gate 2 aggTrades as taker flow proxy
           const takerFlow = existing.aggTrades?.total > 0
             ? {
                 takerBias:  existing.aggTrades.cvdBias,
@@ -792,15 +791,6 @@ export async function runDerivScan({ exchange, tf, onProgress, onResult, onDone,
                 sellRatio:  existing.aggTrades.sellRatio,
               }
             : null;
-
-          // Build synthetic candles from OI history as fallback
-          // if MTF klines fetch failed — lets calcDerivScore compute OI score
-          // using OI-derived price proxy rather than defaulting to neutral 50
-          const candlesForScore = mtfCandles.length >= 4
-            ? mtfCandles
-            : oiLong.length >= 4
-              ? oiLong.map(o => ({ time: o.time, open: o.oi, high: o.oi, low: o.oi, close: o.oi, volume: 0 }))
-              : [];
 
           const miniData = {
             ticker:       existing.ticker,
@@ -816,7 +806,7 @@ export async function runDerivScan({ exchange, tf, onProgress, onResult, onDone,
             basisAnalysis:  basisAna,
             insuranceTrend,
             moneyFlow,
-            candles:        candlesForScore,
+            candles:        mtfCandles, // used for price change context; OI score has ticker fallback
           };
 
           const dsResult = calcDerivScore(miniData, miniAnalysis);
