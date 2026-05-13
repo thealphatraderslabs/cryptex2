@@ -624,7 +624,7 @@ function runGate2(oiHistory, aggTradesData, smcDir, htfCandles) {
     oiDivergence,
     cvdBias,
     cvdDirection,
-    reason:       parts.join(' · '),
+    reason: `[Score ${Math.max(0, score)}/4] ` + parts.join(' · '),
   };
 }
 
@@ -793,13 +793,20 @@ export async function runDerivScan({ exchange, tf, onProgress, onResult, onDone,
               }
             : null;
 
-          // Funding passed in data but signals.js weights it at 0
-          // (funding component fixed to 50 — no directional effect on score)
+          // Build synthetic candles from OI history as fallback
+          // if MTF klines fetch failed — lets calcDerivScore compute OI score
+          // using OI-derived price proxy rather than defaulting to neutral 50
+          const candlesForScore = mtfCandles.length >= 4
+            ? mtfCandles
+            : oiLong.length >= 4
+              ? oiLong.map(o => ({ time: o.time, open: o.oi, high: o.oi, low: o.oi, close: o.oi, volume: 0 }))
+              : [];
+
           const miniData = {
             ticker:       existing.ticker,
             oiHistory:    oiLong,
             takerFlow,
-            fundingInfo:  new Map(), // empty — funding not scored
+            fundingInfo:  new Map(),
             insuranceFund,
             basisHistory,
             bookTicker,
@@ -809,7 +816,7 @@ export async function runDerivScan({ exchange, tf, onProgress, onResult, onDone,
             basisAnalysis:  basisAna,
             insuranceTrend,
             moneyFlow,
-            candles:        mtfCandles,
+            candles:        candlesForScore,
           };
 
           const dsResult = calcDerivScore(miniData, miniAnalysis);
