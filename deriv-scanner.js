@@ -52,10 +52,14 @@ const OB_PROXIMITY_MAX_PCT = 0.04; // price within 4% of fresh OB or swing level
 const RECENT_BOS_BARS      = 4;    // no BOS in last N bars (pre-move state)
 
 // ── Gate 2 thresholds ──────────────────────────────────────────
-const OI_DIVERGENCE_MIN_PCT = 1.5; // OI must rise >= 1.5% while price flat
-const PRICE_FLAT_MAX_PCT    = 1.5; // price range <= 1.5% for OI divergence
-const CVD_CONFIRM_THRESHOLD = 15;  // |cvdBias| >= 15% = strong directional
-const GATE2_PASS_SCORE      = 3;   // need >= 3 points — forces OI + CVD both contributing
+const OI_DIVERGENCE_MIN_PCT = 0.8;  // OI rise >= 0.8% while price flat (was 1.5% — too strict)
+const PRICE_FLAT_MAX_PCT    = 2.0;  // price range <= 2.0% for OI divergence (was 1.5%)
+const CVD_CONFIRM_THRESHOLD = 12;   // |cvdBias| >= 12% = strong directional (was 15%)
+const GATE2_PASS_SCORE      = 2;    // back to 2 — but OI alone only gives 1pt now (partial)
+                                    // Full OI (1.5%+ while flat) = 2pts alone
+                                    // Partial OI (0.8%+) + any CVD = 1+1 = 2pts
+                                    // Strong CVD alone = 2pts (kept — taker aggression IS a signal)
+                                    // Opposing CVD = -1pt penalty still applies
 
 // ── Gate 3 thresholds ──────────────────────────────────────────
 const DERIV_SCORE_LONG_MIN  = 58;
@@ -188,12 +192,15 @@ async function fetchMTFKlines(symbol, exchange, tfKey, limit = 200) {
   } catch { return []; }
 }
 
-// OI short window — Gate 2 divergence (6-12 bars)
-async function fetchOIShort(symbol, limit = 12) {
-  const sym = symbol.toUpperCase() + 'USDT';
+// OI short window — Gate 2 divergence
+// Uses 30m interval for 15m/1h TFs, 1h for 4h+, to get meaningful divergence window
+async function fetchOIShort(symbol, limit = 24, tfKey = '1h') {
+  const sym      = symbol.toUpperCase() + 'USDT';
+  // Use tighter interval for shorter TFs to capture recent position building
+  const interval = (tfKey === '15m' || tfKey === '1h') ? '30min' : '1h';
   try {
     const d = await fetchJSON(
-      `${BYBIT_BASE}/open-interest?category=linear&symbol=${sym}&intervalTime=1h&limit=${limit}`
+      `${BYBIT_BASE}/open-interest?category=linear&symbol=${sym}&intervalTime=${interval}&limit=${limit}`
     );
     if (d.retCode !== 0) return [];
     return d.result.list.reverse().map(r => ({
@@ -730,7 +737,7 @@ export async function runDerivScan({ exchange, tf, onProgress, onResult, onDone,
       const results = await Promise.all(batch.map(async r => {
         try {
           const [oiHistory, aggTrades] = await Promise.all([
-            fetchOIShort(r.sym, 12),
+            fetchOIShort(r.sym, 24, tf),
             fetchAggTradesLean(r.sym, 150),
           ]);
           const g2 = runGate2(oiHistory, aggTrades, r.g1.dir, r.htfCandles);
