@@ -125,7 +125,7 @@ function renderEmpty(msg) {
       <div class="ds-empty-glyph">◈</div>
       <div>${msg || 'SELECT EXCHANGE + TIMEFRAME AND PRESS SCAN'}</div>
       <div style="font-size:9px;color:var(--muted);margin-top:6px;max-width:320px;text-align:center">
-        Coins passing all 3 gates: HTF Structure · Funding Alignment · Derivatives Confluence
+        Coins passing all 3 gates: HTF Structure · OI + CVD Loading · Derivatives Confluence
       </div>
     </div>`;
 }
@@ -156,7 +156,7 @@ function startScan() {
       <div class="smc-progress-ring" id="ds-progress-ring"></div>
       <div style="flex:1;min-width:0">
         <div id="ds-progress-text" class="smc-progress-text">Initialising 3-gate funnel…</div>
-        <div id="ds-scan-sub" style="font-size:8px;color:var(--muted);margin-top:2px;font-family:var(--font-mono)">Fetching pairs + funding intervals + insurance fund</div>
+        <div id="ds-scan-sub" style="font-size:8px;color:var(--muted);margin-top:2px;font-family:var(--font-mono)">Fetching pairs + insurance fund</div>
       </div>
     </div>
     <div class="ds-gate-rows">
@@ -214,7 +214,7 @@ function startScan() {
       setStatus(msg);
 
       if (phase === 'init') {
-        if (subEl) subEl.textContent = 'Fetching pairs + funding intervals + insurance fund…';
+        if (subEl) subEl.textContent = 'Fetching pairs + insurance fund…';
         return;
       }
 
