@@ -2555,23 +2555,7 @@ body {
 }
 
 /* Funding row */
-.ds-card-funding {
-  display: flex; align-items: center; gap: 8px;
-  padding: 4px 12px;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg3);
-}
-.ds-funding-label {
-  font-size: 7px; color: var(--muted);
-  text-transform: uppercase; letter-spacing: 0.12em;
-  flex-shrink: 0;
-}
-.ds-funding-val {
-  font-family: var(--font-mono);
-  font-size: 9px; font-weight: 600;
-  letter-spacing: 0.04em;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
+/* ds-card-funding moved to Phase 5 v3 override block below */
 
 /* Gate breakdown rows */
 .ds-card-gates {
@@ -2885,5 +2869,34 @@ body {
   font-family: var(--font-mono);
   font-size: 7px; color: var(--muted);
   letter-spacing: 0.08em; margin-left: auto;
+  text-transform: uppercase;
+}
+
+/* ── Phase 5 v3 — funding info row clearly distinct from gate rows ── */
+/* Previously ds-card-funding looked identical to ds-card-gate rows.
+   Now uses a different background, italic label, and pill tag
+   so it's visually unambiguous as context-only information. */
+.ds-card-funding {
+  display: flex; align-items: center; gap: 6px;
+  padding: 3px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);  /* darker than gate rows — visually separate */
+  flex-wrap: wrap;
+}
+.ds-funding-label {
+  font-size: 6px; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.14em;
+  flex-shrink: 0; opacity: 0.7;
+}
+.ds-funding-val {
+  font-family: var(--font-mono);
+  font-size: 8px; font-weight: 500;
+}
+.ds-funding-info {
+  font-family: var(--font-mono);
+  font-size: 6px; color: var(--muted);
+  letter-spacing: 0.1em; margin-left: auto;
+  background: rgba(255,255,255,0.04);
+  padding: 1px 4px; border: 1px solid var(--border);
   text-transform: uppercase;
 }
