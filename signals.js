@@ -410,20 +410,36 @@ function calcDerivScore(data, analysis) {
   }
 
   // ── 1. OI + price direction (35%) ──────────────────────────
+  // OI direction vs price direction across last 4 bars.
+  // Price change derived from candles if available, else from ticker.
+  // OI change derived from oiHistory directly — no candles needed.
   let oiRaw = 0;
-  if (oiHistory?.length >= 4 && analysis?.candles?.length >= 4) {
-    const recentOI  = oiHistory.slice(-4);
-    const oiChg     = (recentOI[3].oi - recentOI[0].oi) / recentOI[0].oi;
-    const lastIdx   = analysis.candles.length - 1;
-    const priceChg  = (analysis.candles[lastIdx].close - analysis.candles[lastIdx - 3].close)
-                    / analysis.candles[lastIdx - 3].close;
-    const OI_SIG    = 0.02;
-    const PRICE_SIG = 0.008;
-    if      (oiChg >  OI_SIG && priceChg >  PRICE_SIG) oiRaw =  0.85;
-    else if (oiChg >  OI_SIG && priceChg < -PRICE_SIG) oiRaw = -0.90;
-    else if (oiChg < -OI_SIG && priceChg >  PRICE_SIG) oiRaw =  0.40;
-    else if (oiChg < -OI_SIG && priceChg < -PRICE_SIG) oiRaw = -0.50;
-    else if (oiChg >  OI_SIG)                           oiRaw =  0.20;
+  if (oiHistory?.length >= 4) {
+    const recentOI = oiHistory.slice(-4);
+    const oiChg    = (recentOI[3].oi - recentOI[0].oi) / (recentOI[0].oi || 1);
+
+    // Get price change from candles if available, else from ticker.price24h
+    let priceChg = 0;
+    if (analysis?.candles?.length >= 4) {
+      const lastIdx = analysis.candles.length - 1;
+      const prevClose = analysis.candles[lastIdx - 3].close;
+      priceChg = prevClose > 0
+        ? (analysis.candles[lastIdx].close - prevClose) / prevClose
+        : 0;
+    } else if (data?.ticker?.price24h != null) {
+      // Fallback: use 24h price change as directional proxy (divide by 6 for ~4h equivalent)
+      priceChg = (data.ticker.price24h / 100) / 6;
+    }
+
+    const OI_SIG    = 0.02;   // 2% OI change = significant
+    const PRICE_SIG = 0.008;  // 0.8% price change = significant
+
+    if      (oiChg >  OI_SIG && priceChg >  PRICE_SIG) oiRaw =  0.85; // new longs
+    else if (oiChg >  OI_SIG && priceChg < -PRICE_SIG) oiRaw = -0.90; // new shorts
+    else if (oiChg < -OI_SIG && priceChg >  PRICE_SIG) oiRaw =  0.40; // short covering
+    else if (oiChg < -OI_SIG && priceChg < -PRICE_SIG) oiRaw = -0.50; // long liquidation
+    else if (oiChg >  OI_SIG)                           oiRaw =  0.20; // OI up, price flat
+    else if (oiChg < -OI_SIG)                           oiRaw = -0.20; // OI down, price flat
   }
   components.oi = { score: toComponent(oiRaw, 35), weight: 35, label: 'OI Flow' };
 
