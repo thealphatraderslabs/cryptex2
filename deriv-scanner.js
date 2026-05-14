@@ -39,12 +39,12 @@ const BYBIT_BASE = 'https://api.bybit.com/v5/market';
 const FAPI_BASE  = 'https://fapi.binance.com/fapi/v1';
 
 // ── Batch sizing ───────────────────────────────────────────────
-const BATCH_SIZE_G1  = 15;
-const BATCH_SIZE_G2  = 12;
-const BATCH_SIZE_G3  = 8;
-const BATCH_DELAY_G1 = 150;
-const BATCH_DELAY_G2 = 120;
-const BATCH_DELAY_G3 = 200;
+const BATCH_SIZE_G1  = 12;   // reduced from 15 — less parallel pressure
+const BATCH_SIZE_G2  = 10;   // reduced from 12
+const BATCH_SIZE_G3  = 6;    // reduced from 8
+const BATCH_DELAY_G1 = 200;  // increased from 150ms
+const BATCH_DELAY_G2 = 180;  // increased from 120ms
+const BATCH_DELAY_G3 = 250;  // increased from 200ms
 
 // ── Gate 1 thresholds ──────────────────────────────────────────
 const ATR_COMPRESSION_MAX  = 0.88; // atrNow/atrBaseline must be below this
@@ -79,10 +79,27 @@ let scanAborted = false;
 let scanRunning = false;
 
 // ── Utils ──────────────────────────────────────────────────────
-async function fetchJSON(url) {
-  const r = await fetch(url);
-  if (!r.ok) throw new Error(`HTTP ${r.status}`);
-  return r.json();
+async function fetchJSON(url, retries = 2) {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const r = await fetch(url);
+      // 418 = Binance IP ban (too many requests), 429 = rate limit
+      if (r.status === 418 || r.status === 429) {
+        const waitMs = r.status === 418 ? 60000 : 5000; // 60s for ban, 5s for rate limit
+        if (attempt < retries) {
+          console.warn(`Rate limited (${r.status}) — waiting ${waitMs/1000}s before retry`);
+          await sleep(waitMs);
+          continue;
+        }
+        throw new Error(`HTTP ${r.status} — rate limited by exchange`);
+      }
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.json();
+    } catch (e) {
+      if (attempt === retries) throw e;
+      await sleep(1000 * (attempt + 1));
+    }
+  }
 }
 function sleep(ms) { return new Promise(res => setTimeout(res, ms)); }
 
@@ -226,25 +243,40 @@ async function fetchOILong(symbol, limit = 24) {
 }
 
 // aggTrades — Gate 2 CVD calculation
-// FAPI convention: m=true means the buyer is the maker = SELL order filled
-// m=false means buyer is taker = BUY order placed aggressively
-async function fetchAggTradesLean(symbol, limit = 150) {
+// For Bybit scans: use Bybit /recent-trade (category=linear)
+// For Binance scans: use FAPI /aggTrades
+// FAPI convention: m=true means maker sell = taker BUY pressure
+// Bybit convention: side='Buy' = buy trade
+async function fetchAggTradesLean(symbol, exchange = 'bybit', limit = 150) {
   const sym = symbol.toUpperCase() + 'USDT';
   try {
-    const d = await fetchJSON(`${FAPI_BASE}/aggTrades?symbol=${sym}&limit=${limit}`);
-    let buyVol = 0, sellVol = 0;
-    for (const t of d) {
-      const qty = parseFloat(t.q);
-      if (t.m) sellVol += qty; // maker = passive = sell side absorbed
-      else     buyVol  += qty; // taker = aggressive = buy side pushing
+    if (exchange === 'bybit') {
+      const d = await fetchJSON(
+        `${BYBIT_BASE}/recent-trade?category=linear&symbol=${sym}&limit=${limit}`
+      );
+      if (d.retCode !== 0) throw new Error(d.retMsg);
+      let buyVol = 0, sellVol = 0;
+      for (const t of (d.result?.list || [])) {
+        const qty = parseFloat(t.size);
+        if (t.side === 'Buy')  buyVol  += qty;
+        else                   sellVol += qty;
+      }
+      const total   = buyVol + sellVol;
+      const cvdBias = total > 0 ? ((buyVol - sellVol) / total) * 100 : 0;
+      return { buyVol, sellVol, total, cvdBias, buyRatio: total > 0 ? buyVol/total : 0.5, sellRatio: total > 0 ? sellVol/total : 0.5 };
+    } else {
+      // Binance FAPI aggTrades
+      const d = await fetchJSON(`${FAPI_BASE}/aggTrades?symbol=${sym}&limit=${limit}`);
+      let buyVol = 0, sellVol = 0;
+      for (const t of d) {
+        const qty = parseFloat(t.q);
+        if (t.m) sellVol += qty; // maker = passive = sell side
+        else     buyVol  += qty; // taker = aggressive = buy side
+      }
+      const total   = buyVol + sellVol;
+      const cvdBias = total > 0 ? ((buyVol - sellVol) / total) * 100 : 0;
+      return { buyVol, sellVol, total, cvdBias, buyRatio: total > 0 ? buyVol/total : 0.5, sellRatio: total > 0 ? sellVol/total : 0.5 };
     }
-    const total   = buyVol + sellVol;
-    const cvdBias = total > 0 ? ((buyVol - sellVol) / total) * 100 : 0;
-    return {
-      buyVol, sellVol, total, cvdBias,
-      buyRatio:  total > 0 ? buyVol / total  : 0.5,
-      sellRatio: total > 0 ? sellVol / total : 0.5,
-    };
   } catch {
     return { buyVol: 0, sellVol: 0, total: 0, cvdBias: 0, buyRatio: 0.5, sellRatio: 0.5 };
   }
@@ -738,7 +770,7 @@ export async function runDerivScan({ exchange, tf, onProgress, onResult, onDone,
         try {
           const [oiHistory, aggTrades] = await Promise.all([
             fetchOIShort(r.sym, 24, tf),
-            fetchAggTradesLean(r.sym, 150),
+            fetchAggTradesLean(r.sym, exchange, 150),
           ]);
           const g2 = runGate2(oiHistory, aggTrades, r.g1.dir, r.htfCandles);
           return { ...r, g2, oiHistory, aggTrades };
