@@ -79,17 +79,19 @@ function init() {
     }
   }
 
-  // Expose globally so funding-scanner-ui can call it
+  // Expose globally so funding-scanner-ui and deriv-scanner-ui can call it
   window.__atlShowStage = showStage;
 
   railAnalysis?.addEventListener('click', () => showStage('analysis'));
   railSMC?.addEventListener('click', () => showStage('smc'));
   railFunding?.addEventListener('click', () => showStage('funding'));
+  $('rail-deriv')?.addEventListener('click', () => showStage('deriv'));
 
   // ── Mobile bottom rail ──────────────────────────────────────
   document.getElementById('mbr-analysis')?.addEventListener('click', () => showStage('analysis'));
   document.getElementById('mbr-smc')?.addEventListener('click', () => showStage('smc'));
   document.getElementById('mbr-funding')?.addEventListener('click', () => showStage('funding'));
+  document.getElementById('mbr-deriv')?.addEventListener('click', () => showStage('deriv'));
 
   // ── Exchange toggle ──────────────────────────────────────────
   document.querySelectorAll('#smc-exchange-toggle .smc-toggle').forEach(btn => {
