@@ -37,10 +37,25 @@ let scanRunning   = false;
 // ══════════════════════════════════════════════════════════════
 //  UTILS
 // ══════════════════════════════════════════════════════════════
-async function fetchJSON(url) {
-  const r = await fetch(url);
-  if (!r.ok) throw new Error(`HTTP ${r.status}`);
-  return r.json();
+async function fetchJSON(url, retries = 2) {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const r = await fetch(url);
+      if (r.status === 418 || r.status === 429) {
+        const waitMs = r.status === 418 ? 60000 : 5000;
+        if (attempt < retries) {
+          await sleep(waitMs);
+          continue;
+        }
+        throw new Error(`HTTP ${r.status} — rate limited`);
+      }
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.json();
+    } catch (e) {
+      if (attempt === retries) throw e;
+      await sleep(1000 * (attempt + 1));
+    }
+  }
 }
 
 function sleep(ms) {
