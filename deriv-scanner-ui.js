@@ -19,41 +19,13 @@ const $ = id => document.getElementById(id);
 //  INIT
 // ═══════════════════════════════════════════════════════════════
 function init() {
-  // ── Register stage in global router ─────────────────────────
-  // Patch showStage to include 'deriv'
-  const origShowStage = window.__atlShowStage;
-  window.__atlShowStage = function(stage) {
-    // Hide deriv stage first, deactivate rail
-    const stageDerivEl = $('stage-deriv');
-    if (stageDerivEl) stageDerivEl.style.display = 'none';
-    $('rail-deriv')?.classList.remove('active');
-    $('mbr-deriv')?.classList.remove('active');
-
-    if (stage === 'deriv') {
-      // Show deriv, hide others, manage top strip
-      $('stage-analysis')  && ($('stage-analysis').style.display  = 'none');
-      $('stage-smc')       && ($('stage-smc').style.display       = 'none');
-      $('stage-funding')   && ($('stage-funding').style.display   = 'none');
-      $('top-strip')       && ($('top-strip').style.display       = 'none');
-      $('stage')           && $('stage').classList.add('smc-active');
-
-      if (stageDerivEl) stageDerivEl.style.display = '';
-      $('rail-deriv')?.classList.add('active');
-      $('mbr-deriv')?.classList.add('active');
-
-      // Mobile scroll
-      if (window.innerWidth <= 1099 && stageDerivEl) {
-        stageDerivEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      }
-    } else {
-      // Let original handler deal with other stages
-      origShowStage?.(stage);
-    }
-  };
-
-  // ── Rail / mobile nav ────────────────────────────────────────
-  $('rail-deriv')?.addEventListener('click', () => window.__atlShowStage('deriv'));
-  $('mbr-deriv')?.addEventListener('click',  () => window.__atlShowStage('deriv'));
+  // ── Rail / mobile nav — register after smc-scanner-ui sets __atlShowStage ──
+  // Use setTimeout(0) to ensure smc-scanner-ui.js init() has run first
+  // and window.__atlShowStage is defined before we attach rail listeners
+  setTimeout(() => {
+    $('rail-deriv')?.addEventListener('click', () => window.__atlShowStage?.('deriv'));
+    $('mbr-deriv')?.addEventListener('click',  () => window.__atlShowStage?.('deriv'));
+  }, 0);
 
   // ── Exchange toggles ─────────────────────────────────────────
   document.querySelectorAll('#ds-exchange-toggle .smc-toggle').forEach(btn => {
